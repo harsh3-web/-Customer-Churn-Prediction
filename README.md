@@ -159,20 +159,4 @@ Main dependencies (see `requirement.txt` for full list):
 
 ---
 
-## Reporting
 
-- All steps in the pipeline are logged.
-- Model performance metrics and feature importance are reported.
-- Output files (models, reports) are saved for further analysis.
-
----
-
-## License
-
-This project is released under the MIT License.
-
----
-
-## Author
-
-- [rajivaleaakash](https://github.com/rajivaleaakash)
