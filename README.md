@@ -65,8 +65,8 @@ Customer-Churn-Prediction/
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/rajivaleaakash/Customer-Churn-Prediction.git
-   cd Customer-Churn-Prediction
+   git clone https://github.com/harsh3-web/-Customer-Churn-Prediction.git
+   cd ./-Customer-Churn-Prediction
    ```
 
 2. **Install dependencies:**
