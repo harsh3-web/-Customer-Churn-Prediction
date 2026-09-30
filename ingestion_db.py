@@ -1,152 +1,77 @@
-from sqlalchemy import create_engine,text
-import pandas as pd
+"""
+Data ingestion: loads raw CSV files from data/ into a SQLite database.
+
+SQLite is used so the pipeline runs anywhere (Colab, laptop) without a
+database server. The same SQLAlchemy code works for SQL Server/Postgres by
+changing only DB_URL.
+"""
 import os
 import time
+import pandas as pd
+from sqlalchemy import create_engine, text
 from logging_setup import setup_logger
-logger = setup_logger('ingestion_db')
+
+logger = setup_logger("ingestion_db")
+
+DATA_DIR = "data"
+DB_URL = "sqlite:///churn.db"
+DATASET_URL = ("https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/"
+               "master/data/Telco-Customer-Churn.csv")
+
 
 def create_connection():
-    '''Create and return database engine'''
-    try:
-        server = r'server-name'
-        database = r'database-name'
-        connection_string = f"mssql+pyodbc://@{server}/{database}?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes"
-        engine = create_engine(connection_string)
+    """Create and return a SQLAlchemy engine."""
+    engine = create_engine(DB_URL)
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    logger.info(f"Database connection established: {DB_URL}")
+    return engine
 
-        # Test Connection
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        logger.info("Database connection established successfully")
-        return engine
-    except Exception as e:
-        logger.error(f"Failed to create database connection: {e}")
-        raise
+
+def download_dataset_if_missing():
+    """Download the IBM Telco churn dataset into data/ if no CSV is present."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if any(f.lower().endswith(".csv") for f in os.listdir(DATA_DIR)):
+        return
+    logger.info("No CSV in data/, downloading IBM Telco dataset")
+    df = pd.read_csv(DATASET_URL)
+    df.to_csv(os.path.join(DATA_DIR, "telecom_data.csv"), index=False)
+    print("Downloaded dataset to data/telecom_data.csv")
+
 
 def ingest_db(df, table_name, engine):
-        """This function will ingest the dataframe into database table"""
-        try:
-            clean_table_name = table_name.replace(' ','_').replace('-','_').replace('.','_')
-            logger.info(f"Starting ingestion for table: {clean_table_name}")
-            logger.info(f"DataFrame shape: {df.shape}")
-            df.to_sql(
-                table_name,
-                con = engine,
-                if_exists='replace',
-                index=False
-                #chunksize = 1000,
-                #method='multi'
-            )
-            with engine.connect() as conn:
-                result = conn.execute(text(f"SELECT COUNT(*) FROM [{clean_table_name}] limit"))
-                count = result.fetchone()[0]
-                logger.info(f"Successfully ingested {count} records into table '{clean_table_name}'")
-
-            return True
-        
-        except Exception as e:
-            logger.error(f"Failed to ingest data into table '{table_name}: {e}")
-            return False
+    """Write a dataframe into a database table (replaces if it exists)."""
+    table_name = table_name.replace(" ", "_").replace("-", "_").replace(".", "_")
+    df.to_sql(table_name, con=engine, if_exists="replace", index=False)
+    with engine.connect() as conn:
+        count = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}")).fetchone()[0]
+    logger.info(f"Ingested {count} rows into '{table_name}'")
+    print(f"Ingested {count} rows into table '{table_name}'")
+    return True
 
 
 def load_raw_data():
-     """This function will load CSV data into dataframe and ingest into db"""
-     data_directory = r"D:\Elevated_Lab\Customer Churn Analysis for Telecom Industry\Customer-Churn-Prediction\data"
-
-     if not os.path.exists(data_directory):
-          logger.error(f"directory not found: {data_directory}")
-          return
-     
-     try:
-          engine = create_connection()
-     except Exception:
-          logger.error("Could not establish database connection. Exiting.")
-
-     start_time = time.time()
-     successful_files = 0
-     failed_files = 0
-    
-     logger.info("=" * 50)
-     logger.info("Starting CSV ingestion process")
-     logger.info(f"Source directory: {data_directory}")
-     logger.info("=" * 50)
-
-     try:
-          csv_files = [f for f in os.listdir(data_directory) if f.lower().endswith('.csv')]
-
-          if not csv_files:
-               logger.warning(f"No CSV files found in directory: {data_directory}")
-               return
-          
-          logger.info(f"Found {len(csv_files)} CSV file to process")
-
-          for file in csv_files:
-               file_path = os.path.join(data_directory, file)
-               table_name = file[:-4]
-
-               try:
-                    logger.info(f"Processing file: {file}")
-
-                    # read csv file.
-                    df = pd.read_csv(file_path)
-                    logger.info(f"Loaded CSV with shape: {df.shape}")
-                    logger.info(f"Columns: {list(df.columns)}")
-
-                    # Check for empty dataframe
-                    if df.empty:
-                         logger.warning(f"File {file} is empty. Skipping.")
-                         continue
-                    
-                    # Ingest into Database
-                    if ingest_db(df, table_name, engine):
-                         successful_files += 1
-                         logger.info(f"Successfully processed: {file}")
-                    else:
-                         failed_files += 1
-                         logger.error(f"Failed to process: {file}")
-                
-               except pd.errors.EmptyDataError:
-                    logger.error(f"File {file} is empty or corrupted")
-                    failed_files += 1
-               except pd.errors.ParserError as e:
-                    logger.error(f"Error parsing file {file}: {e}")
-                    failed_files += 1
-               except Exception as e:
-                    logger.error(f"Unexpected error processing file {file}: {e}")
-                    failed_files += 1
-                
-     except Exception as e:
-          logger.error(f"Error accessing directory {data_directory}: {e}")
-          return
-     
-     finally:
-          # Clean up
-          if 'engine' in locals():
-               engine.dispose()
-               logger.info("Database connection closed")
-     
-     # Calculate and log summary
-     end_time = time.time()
-     total_time = (end_time - start_time)/60
-
-     logger.info("="*50)
-     logger.info("INGESTION COMPLETE")
-     logger.info(f"Total files processed: {successful_files + failed_files}")
-     logger.info(f"Successful: {successful_files}")
-     logger.info(f"Failed: {failed_files}")
-     logger.info(f"Total time taken: {total_time:.2f} minutes")
-     logger.info("=" * 50)
-
-
-def main():
-    """Main execution function"""
+    """Load every CSV in data/ into the database, one table per file."""
+    download_dataset_if_missing()
+    engine = create_connection()
+    start = time.time()
+    ok, failed = 0, 0
     try:
-        load_raw_data()
-    except KeyboardInterrupt:
-        logger.info("Process interrupted by user")
-    except Exception as e:
-        logger.error(f"Unexpected error in main execution: {e}")
-        raise
+        for file in [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".csv")]:
+            try:
+                df = pd.read_csv(os.path.join(DATA_DIR, file))
+                if df.empty:
+                    logger.warning(f"{file} is empty, skipping")
+                    continue
+                ingest_db(df, file[:-4], engine)
+                ok += 1
+            except Exception as e:
+                logger.error(f"Failed to ingest {file}: {e}")
+                failed += 1
+    finally:
+        engine.dispose()
+    logger.info(f"Ingestion done: {ok} ok, {failed} failed, {time.time() - start:.1f}s")
 
-if __name__ == '__main__':
-    main()
 
+if __name__ == "__main__":
+    load_raw_data()
