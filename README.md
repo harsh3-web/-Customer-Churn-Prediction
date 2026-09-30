@@ -1,162 +1,131 @@
 # Customer Churn Prediction
 
-This repository provides an end-to-end pipeline for predicting customer churn in the telecom industry using machine learning techniques. The project covers data ingestion, feature engineering, model training, evaluation, and reporting.
+An end-to-end machine learning pipeline that predicts which telecom customers are likely to churn, so retention teams can act before they leave.
 
-## Table of Contents
+**Dataset:** [IBM Telco Customer Churn](https://github.com/IBM/telco-customer-churn-on-icp4d), 7,043 customers, 21 attributes, 26.5% churn rate.
 
-- [Project Overview](#project-overview)
-- [Features](#features)
-- [Directory Structure](#directory-structure)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Requirements](#requirements)
-- [Modeling & Evaluation](#modeling--evaluation)
-- [Data Ingestion](#data-ingestion)
-- [Feature Engineering](#feature-engineering)
-- [Reporting](#reporting)
-- [License](#license)
+## Results
 
----
+All models are tuned with RandomizedSearchCV (10 combinations × stratified 5-fold CV). The best model is selected by **CV ROC-AUC**, and the held-out test set (20%, 1,409 customers) is used only once, for final evaluation.
 
-## Project Overview
+| Model | CV ROC-AUC | Test ROC-AUC | Precision | Recall | F1 | Accuracy | Features kept |
+|---|---|---|---|---|---|---|---|
+| Random Forest | 0.8416 | 0.8355 | 0.5649 | **0.6283** | **0.5949** | 0.7729 | 25 |
+| **XGBoost (best)** | **0.8432** | **0.8421** | **0.6011** | 0.5802 | 0.5905 | **0.7864** | 25 |
+| LightGBM | 0.8373 | 0.8344 | 0.5899 | 0.5963 | 0.5931 | 0.7828 | 14 |
 
-Customer churn is a critical business problem for telecom companies. This repository provides a reproducible workflow to predict customer churn using advanced machine learning models and techniques such as feature selection and handling imbalanced data.
+Precision, recall and F1 are for the churn class at the default 0.5 threshold.
 
-The main components include:
+- **XGBoost** gives the best ranking of customers by churn risk (highest ROC-AUC) and the most precise churn flags.
+- **Random Forest** catches the most churners (highest recall), which is useful when missing a churner costs more than an unnecessary retention offer.
+- CV and test scores are within 0.01 for every model, which indicates no data leakage and good generalisation.
 
-- **Data ingestion** from CSV files into a database.
-- **Feature engineering** and preprocessing.
-- **Model training** with various algorithms (e.g. Random Forest, XGBoost, LightGBM).
-- **Feature selection** and importance analysis.
-- **Model evaluation** and reporting.
+![ROC Curves](reports/roc_curves.png)
+![Feature Importance](reports/feature_importance.png)
 
----
+## Key Business Insights (from EDA)
 
-## Features
+| Segment | Churn rate |
+|---|---|
+| Month-to-month contract | 42.7% (vs 2.8% on two-year contracts) |
+| Tenure of 0–6 months | 52.9% (vs 9.5% after 4+ years) |
+| Electronic check payment | 45.3% (vs 15–19% for other methods) |
+| Fiber optic internet | 41.9% (vs 19.0% for DSL) |
+| No tech support | 41.6% (vs 15.2% with tech support) |
+| Senior citizens | 41.7% (vs 23.6% for non-seniors) |
 
-- Automated data ingestion from local CSV files.
-- Feature engineering (e.g. creation of high-risk payment features, customer profiles).
-- Handling of imbalanced data using SMOTE.
-- Model training and selection, including saving the best model.
-- Comprehensive reporting of training process and results.
-- Modular codebase for easy customization and extension.
+**Highest-risk profile:** new customers on month-to-month contracts, paying high monthly bills by electronic check, without add-on support services.
 
----
+**Suggested actions:** incentives to move to one- or two-year contracts, onboarding support in the first 6 months, and promotion of auto-pay methods and bundled support services.
 
-## Directory Structure
+## Pipeline
 
 ```
-Customer-Churn-Prediction/
-│
-├── data/                  # Raw data CSV files
-├── models/                # Saved models
-├── features.py            # Feature engineering, selection, importance
-├── ingestion_db.py        # Data ingestion into database
-├── train.py               # Model training pipeline
-├── requirement.txt        # Python dependencies
-├── README.md              # Project documentation
-└── ...                    # Supporting scripts and files
+CSV data ──► SQLite (SQLAlchemy) ──► Cleaning ──► Stratified 80/20 split
+                                                        │
+          ┌─────────────────────────────────────────────┘
+          ▼   (imblearn Pipeline, fitted inside every CV fold)
+  Feature engineering ─► One-hot encoding ─► SMOTE ─► SelectFromModel (RF) ─► Classifier
+                                                                                │
+          RandomizedSearchCV · stratified 5-fold · refit on ROC-AUC ◄──────────┘
+                                                        │
+                                   Best model by CV ROC-AUC ─► Test-set evaluation
 ```
 
----
+### Data leakage prevention
+- The train/test split happens before any learned transformation.
+- Feature engineering, encoding, **SMOTE** and **feature selection** all sit inside one `imblearn` Pipeline, so they are fitted only on the training folds. Synthetic SMOTE samples never reach validation or test data.
+- The best model is chosen by cross-validation score, not test score.
 
-## Installation
+### Feature engineering
 
-1. **Clone the repository:**
+| Feature | Description |
+|---|---|
+| `tenure_segment` | Tenure buckets: 0–6m, 6m–1yr, 1–2yr, 2–4yr, 4+yr |
+| `is_month_to_month`, `has_long_contract` | Contract type flags |
+| `service_bundle_score` | Number of add-on services (security, backup, device protection, tech support) |
+| `charges_per_tenure` | Total charges ÷ (tenure + 1), a measure of spending intensity |
+| `high_monthly_charges` | Monthly charge above the training-set median |
+| `high_risk_payment` | Pays by electronic check |
+| `single_customer` | No partner and no dependents |
 
-   ```bash
-   git clone https://github.com/harsh3-web/-Customer-Churn-Prediction.git
-   cd ./-Customer-Churn-Prediction
-   ```
+### Class imbalance
+Only 26.5% of customers churn. **SMOTE** oversamples the minority class inside each training fold, so the models learn churn patterns instead of defaulting to "no churn".
 
-2. **Install dependencies:**
+### Model-based feature selection
+`SelectFromModel` with a Random Forest keeps the features whose importance is above a tuned threshold (mean, median or 0.5 × mean). It reduced the 53 encoded features to 25 for XGBoost and Random Forest, and to 14 for LightGBM.
 
-   It is recommended to use a virtual environment.
+### Models
+- **Random Forest:** bagging ensemble of decision trees
+- **XGBoost:** gradient boosting with level-wise tree growth and L2 regularisation
+- **LightGBM:** gradient boosting with leaf-wise tree growth and histogram binning
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate   # On Windows: venv\Scripts\activate
-   pip install -r requirement.txt
-   ```
+## Project Structure
 
----
+```
+├── ingestion_db.py      # Downloads data, loads CSVs into SQLite via SQLAlchemy
+├── features.py          # Cleaning, stratified split, FeatureEngineer transformer, preprocessor
+├── train.py             # Full pipeline, hyperparameter tuning, evaluation, reports
+├── logging_setup.py     # Logging configuration
+├── eda.ipynb            # Exploratory data analysis
+├── requirement.txt      # Dependencies
+└── reports/
+    ├── results.md               # Results table
+    ├── roc_curves.png           # ROC curves of all models (test set)
+    ├── feature_importance.png   # Feature importance of best model
+    ├── training_report.txt      # Best hyperparameters, confusion matrices, classification reports
+    └── metadata.json            # Full run metadata
+```
 
-## Usage
+## How to Run
 
-### 1. Data Ingestion
+### Google Colab (recommended)
+```python
+!git clone https://github.com/harsh3-web/-Customer-Churn-Prediction.git
+%cd ./-Customer-Churn-Prediction
+!pip install -q -r requirement.txt
+!python ingestion_db.py
+!python train.py
+```
 
-Place your raw CSV data files in the `data/` directory.
-
-Run the ingestion script to load data into the database:
-
+### Local
 ```bash
+git clone https://github.com/harsh3-web/-Customer-Churn-Prediction.git
+cd ./-Customer-Churn-Prediction
+pip install -r requirement.txt
 python ingestion_db.py
-```
-
-### 2. Feature Engineering & Preprocessing
-
-Feature engineering is performed automatically during training, but you can run feature extraction via:
-
-```bash
-python features.py
-```
-
-### 3. Model Training
-
-Train multiple models and generate a report:
-
-```bash
 python train.py
 ```
 
-This script will:
-- Load and preprocess data
-- Perform feature selection
-- Handle class imbalance using SMOTE (configurable)
-- Train models (Random Forest, XGBoost, LightGBM, etc.)
-- Select and save the best performing model
-- Save all trained models to the `models/` directory
-- Generate a training report
+The dataset downloads automatically on the first run. Training takes about 15–25 minutes on a standard CPU.
 
----
+## Tech Stack
 
-## Requirements
+Python · pandas · NumPy · SQLAlchemy · SQLite · scikit-learn · imbalanced-learn · XGBoost · LightGBM · Matplotlib · Seaborn
 
-Main dependencies (see `requirement.txt` for full list):
+## Future Improvements
 
-- Python 3.8+
-- pandas
-- numpy
-- scikit-learn
-- imbalanced-learn
-- xgboost
-- lightgbm
-- matplotlib, seaborn
-- sqlalchemy
-
----
-
-## Modeling & Evaluation
-
-- **Model Selection:** Multiple classifiers are trained; best model is selected based on ROC AUC.
-- **Feature Selection:** Top features are selected and their importances are reported.
-- **Imbalanced Data:** SMOTE is used to address class imbalance.
-- **Reporting:** Training summary and details are logged and saved.
-
----
-
-## Data Ingestion
-
-- CSV files in `data/` folder are parsed and loaded into a database.
-- Data is cleaned, validated, and ingested with robust error handling and logging.
-
----
-
-## Feature Engineering
-
-- Custom features such as charges per tenure, high monthly charges, high-risk payment methods, single/family customer profiles.
-- Automated preprocessing and feature selection for improved model accuracy.
-
----
-
-
+- **Threshold tuning** using the precision-recall curve, based on the cost of a retention offer vs. the value of a customer
+- **SMOTENC** instead of SMOTE, to handle one-hot categorical features without creating fractional values
+- **SHAP values** to explain individual customer predictions to the retention team
+- **Deployment** as a REST API with periodic retraining and data-drift monitoring
