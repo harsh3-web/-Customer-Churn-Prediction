@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+logs/
+data/
+churn.db
+models/
+.ipynb_checkpoints/
