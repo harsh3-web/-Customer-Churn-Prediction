@@ -1,540 +1,245 @@
+"""
+Churn model training pipeline.
+
+Full pipeline (fitted inside every CV fold, so nothing leaks):
+    FeatureEngineer -> OneHot encoding -> SMOTE -> SelectFromModel(RandomForest) -> Classifier
+
+Models compared: Random Forest, XGBoost, LightGBM
+Tuning: RandomizedSearchCV, stratified 5-fold CV, refit on ROC-AUC
+Best model is chosen by CV ROC-AUC; the test set is used once, for final reporting.
+"""
 import os
-from datetime import datetime
-import joblib
+import json
 import warnings
-warnings.filterwarnings('ignore')
-from logging_setup import setup_logger
-logger = setup_logger("train")
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, classification_report, confusion_matrix, make_scorer
-)
-from sklearn.model_selection import cross_val_score, GridSearchCV, StratifiedKFold, RandomizedSearchCV
-from sklearn.ensemble import RandomForestClassifier
-import xgboost as xgb
-import lightgbm as lgb
+from datetime import datetime
+
+import joblib
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
-from features import (
-    load_and_split_data, 
-    preprocess_features, 
-    select_features,
-    get_feature_importance_names
-)
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import SelectFromModel
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score,
+                             roc_auc_score, roc_curve, classification_report,
+                             confusion_matrix)
+from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
+import xgboost as xgb
+import lightgbm as lgb
 
-TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+from features import load_and_split_data, FeatureEngineer, build_preprocessor
+from logging_setup import setup_logger
+
+warnings.filterwarnings("ignore")
+logger = setup_logger("train")
+
 RANDOM_STATE = 42
+N_ITER = 10          # random hyperparameter combinations tried per model
+CV_FOLDS = 5
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def build_pipeline(model, X_train):
+    """Chain every step so SMOTE and feature selection only ever see training folds."""
+    selector = SelectFromModel(
+        RandomForestClassifier(n_estimators=50, random_state=RANDOM_STATE, n_jobs=1)
+    )
+    return ImbPipeline(steps=[
+        ("features", FeatureEngineer()),
+        ("preprocess", build_preprocessor(X_train)),
+        ("smote", SMOTE(random_state=RANDOM_STATE)),
+        ("select", selector),
+        ("model", model),
+    ])
+
 
 def setup_models():
-    """Setup model configurations with hyperparameters"""
-    logger.info("Setting up model configurations")
-    try:
-        models = {
-            'RandomForest': {
-                'model': RandomForestClassifier(random_state=RANDOM_STATE),
-                'params': {
-                    'n_estimators': [300, 359, 400],
-                    'max_depth': [4, 5, 6],
-                    'min_samples_split': [11, 14, 17],
-                    'min_samples_leaf': [8, 10, 12],
-                    'bootstrap': [False, True],
-                    'max_features': ['sqrt'],
-                    'random_state': [42],
-                    'class_weight': ['balanced','balanced_subsample']
-                }
-            },
-            'XGBoost': {
-                'model': xgb.XGBClassifier(
-                    use_label_encoder=False, 
-                    eval_metric='logloss', 
-                    random_state=RANDOM_STATE
-                ),
-                'params': {
-                    'n_estimators': [350,400,450],
-                    'max_depth': [12,16],
-                    'learning_rate': [0.1, 0.15],
-                    'min_child_weight': [2, 4],
-                    'subsample': [0.9,1.0],
-                    'colsample_bytree': [0.8, 1.0],
-                    'scale_pos_weight': [2, 3],
-                    'reg_lambda': [1.5,2],
-                    'reg_alpha': [2, 2.5]
-                }
-            },
-            'LightGBM': {
-                'model': lgb.LGBMClassifier(
-                        random_state=RANDOM_STATE,
-                        verbosity=-1
-                ),
-                'params': {
-                    'n_estimators': [250,300,350],
-                    'max_depth': [9,15,20],
-                    'learning_rate': [0.01, 0.1, 0.2],
-                    'num_leaves': [30,40,50],
-                    'subsample': [0.8, 1.0],
-                    'colsample_bytree': [0.8, 1.0],
-                    'reg_lambda': [1,1.5],
-                    'min_child_samples': [15,20],
-                    'objective': ['binary'],
-                    'scale_pos_weight': [5,8,11],
-                    'boosting_type': ['gbdt'],
-                    #'class_weight': ['balanced']
-                }
-            }
-        }
-        logger.info(f"Successfully configured {len(models)} models")
-        return models
-    except Exception as e:
-        logger.error(f"Error setting up models: {str(e)}", exc_info=True)
-        raise
+    """Base models and hyperparameter search spaces.
+    'select__threshold' tunes how many features SelectFromModel keeps."""
+    select_space = {"select__threshold": ["mean", "median", "0.5*mean"]}
+    return {
+        "RandomForest": (
+            RandomForestClassifier(random_state=RANDOM_STATE, n_jobs=1),
+            {**select_space,
+             "model__n_estimators": [100, 200, 300],
+             "model__max_depth": [4, 6, 8, 10],
+             "model__min_samples_split": [5, 10, 20],
+             "model__min_samples_leaf": [2, 5, 10],
+             "model__max_features": ["sqrt", "log2"]},
+        ),
+        "XGBoost": (
+            xgb.XGBClassifier(eval_metric="logloss", random_state=RANDOM_STATE,
+                              n_jobs=1, verbosity=0),
+            {**select_space,
+             "model__n_estimators": [100, 200, 300],
+             "model__max_depth": [3, 4, 5, 6],
+             "model__learning_rate": [0.01, 0.05, 0.1],
+             "model__subsample": [0.8, 1.0],
+             "model__colsample_bytree": [0.8, 1.0],
+             "model__min_child_weight": [1, 3, 5],
+             "model__reg_lambda": [1, 2, 5]},
+        ),
+        "LightGBM": (
+            lgb.LGBMClassifier(random_state=RANDOM_STATE, n_jobs=1, verbosity=-1),
+            {**select_space,
+             "model__n_estimators": [100, 200, 300],
+             "model__max_depth": [3, 5, 7, -1],
+             "model__learning_rate": [0.01, 0.05, 0.1],
+             "model__num_leaves": [15, 31, 50],
+             "model__subsample": [0.8, 1.0],
+             "model__subsample_freq": [1],
+             "model__colsample_bytree": [0.8, 1.0],
+             "model__min_child_samples": [10, 20, 40]},
+        ),
+    }
 
-def apply_smote(X_train, y_train):
-    """Apply SMOTE to balance the training dataset"""
-    logger.info("Applying SMOTE to balance training data")
-    try:
-        original_shape = X_train.shape
-        original_class_dist = y_train.value_counts().to_dict()
-        logger.debug(f"Original training data shape: {original_shape}")
-        logger.debug(f"Original class distribution: {original_class_dist}")
-        
-        smote = SMOTE(random_state=RANDOM_STATE)
-        X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
-        
-        new_shape = X_train_res.shape
-        new_class_dist = y_train_res.value_counts().to_dict()
-        logger.info(f"SMOTE applied successfully. New shape: {new_shape}")
-        logger.debug(f"New class distribution: {new_class_dist}")
-        
-        return X_train_res, y_train_res
-    except Exception as e:
-        logger.error(f"Error applying SMOTE: {str(e)}", exc_info=True)
-        logger.warning("Continuing without SMOTE - using original training data")
-        return X_train, y_train
 
-def evaluate_model(model, X_test, y_test):
-    """Evaluate model performance on test data"""
-    logger.debug("Evaluating model performance")
-    try:
-        y_pred = model.predict(X_test)
-        y_pred_proba = model.predict_proba(X_test)[:, 1]
+def evaluate(model, X_test, y_test):
+    """Test-set metrics at the default 0.5 threshold."""
+    y_pred = model.predict(X_test)
+    y_proba = model.predict_proba(X_test)[:, 1]
+    return {
+        "accuracy": accuracy_score(y_test, y_pred),
+        "precision": precision_score(y_test, y_pred),
+        "recall": recall_score(y_test, y_pred),
+        "f1": f1_score(y_test, y_pred),
+        "roc_auc": roc_auc_score(y_test, y_proba),
+        "confusion_matrix": confusion_matrix(y_test, y_pred).tolist(),
+        "classification_report": classification_report(y_test, y_pred),
+    }
 
-        metrics = {
-            'accuracy': accuracy_score(y_test, y_pred),
-            'precision': precision_score(y_test, y_pred),
-            'recall': recall_score(y_test, y_pred),
-            'f1_score': f1_score(y_test, y_pred),
-            'roc_auc': roc_auc_score(y_test, y_pred_proba)
-        }
 
-        metrics['classification_report'] = classification_report(y_test, y_pred)
-        metrics['confusion_matrix'] = confusion_matrix(y_test, y_pred)
+def selected_feature_names(pipeline):
+    """Names of the features kept by SelectFromModel."""
+    all_names = pipeline.named_steps["preprocess"].get_feature_names_out()
+    mask = pipeline.named_steps["select"].get_support()
+    return [n for n, keep in zip(all_names, mask) if keep]
 
-        logger.debug(f"Model evaluation completed. ROC AUC: {metrics['roc_auc']:.4f}")
-        return metrics
-    except Exception as e:
-        logger.error(f"Error evaluating model: {str(e)}", exc_info=True)
-        raise
 
-def train_single_model(model_name, model_config, X_train, y_train, X_test, y_test, use_grid_search=True):
-    """Train a single model with optional hyperparameter tuning"""
-    logger.info(f"Training {model_name} model")
-    try:
-        churn_recall_scorer = make_scorer(recall_score, pos_label=1)
-        churn_f1_scorer = make_scorer(f1_score, pos_label=1)
-        base_model = model_config['model']
-        
-        if use_grid_search and len(model_config['params']) > 0:
-            logger.info(f"Performing hyperparameter tuning for {model_name} using GridSearchCV")
+def train_all(X_train, y_train, X_test, y_test):
+    cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
+    scoring = {"roc_auc": "roc_auc", "recall": "recall",
+               "precision": "precision", "f1": "f1"}
+    results = {}
 
-            cv_folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
-            grid_search = RandomizedSearchCV(
-                base_model,
-                model_config['params'],
-                cv = cv_folds,
-                scoring={
-                    'churn_recall': churn_recall_scorer,
-                    'churn_f1': churn_f1_scorer,
-                    'f1_weighted': "f1_weighted",
-                    'precision_macro': "precision_macro",
-                },
-                refit='churn_recall',
-                n_jobs=-1,
-                verbose=0
-            )
+    for name, (model, params) in setup_models().items():
+        print(f"\n{'=' * 60}\nTuning {name} ({N_ITER} combinations x {CV_FOLDS} folds)...")
+        search = RandomizedSearchCV(
+            build_pipeline(model, X_train), params, n_iter=N_ITER,
+            scoring=scoring, refit="roc_auc", cv=cv,
+            random_state=RANDOM_STATE, n_jobs=-1, verbose=0,
+        )
+        search.fit(X_train, y_train)
+        best = search.best_estimator_
+        i = search.best_index_
+        cv_scores = {m: float(search.cv_results_[f"mean_test_{m}"][i]) for m in scoring}
+        test_scores = evaluate(best, X_test, y_test)
+        features = selected_feature_names(best)
 
-            grid_search.fit(X_train, y_train)
-            best_model = grid_search.best_estimator_
+        results[name] = {"pipeline": best, "best_params": search.best_params_,
+                         "cv": cv_scores, "test": test_scores, "features": features}
 
-            logger.info(f"{model_name} - Best CV Score: {grid_search.best_score_:.4f}")
-            logger.debug(f"{model_name} - Best Parameters: {grid_search.best_params_}")
-            print(f"Best CV Score: {grid_search.best_score_:.4f}")
-            print(f"Best Parameters: {grid_search.best_params_}")
-        else:
-            logger.info(f"Training {model_name} with default parameters (no grid search)")
-            best_model = base_model
-            best_model.fit(X_train, y_train)
+        print(f"CV   ROC-AUC {cv_scores['roc_auc']:.4f} | Recall {cv_scores['recall']:.4f} | "
+              f"Precision {cv_scores['precision']:.4f} | F1 {cv_scores['f1']:.4f}")
+        print(f"TEST ROC-AUC {test_scores['roc_auc']:.4f} | Recall {test_scores['recall']:.4f} | "
+              f"Precision {test_scores['precision']:.4f} | F1 {test_scores['f1']:.4f} | "
+              f"Accuracy {test_scores['accuracy']:.4f}")
+        print(f"Features kept by SelectFromModel: {len(features)}")
+        logger.info(f"{name}: CV {cv_scores} | TEST roc_auc {test_scores['roc_auc']:.4f}")
+    return results
 
-        metrics = evaluate_model(best_model, X_test, y_test)
 
-        results = {
-            'model': best_model,
-            'metrics': metrics,
-            'model_name': model_name
-        }
+def save_outputs(results, best_name, X_test, y_test):
+    os.makedirs("models", exist_ok=True)
+    os.makedirs("reports", exist_ok=True)
 
-        logger.info(f"{model_name} training completed successfully")
-        logger.info(f"{model_name} Results - Accuracy: {metrics['accuracy']:.4f}, "
-                   f"Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, "
-                   f"F1: {metrics['f1_score']:.4f}, ROC AUC: {metrics['roc_auc']:.4f}")
+    # Models
+    for name, r in results.items():
+        joblib.dump(r["pipeline"], f"models/{name}_pipeline.joblib")
+    joblib.dump(results[best_name]["pipeline"], "models/best_model.joblib")
 
-        print(f"\n{model_name} Results:")
-        print(f"Accuracy: {metrics['accuracy']:.4f}")
-        print(f"Precision: {metrics['precision']:.4f}")
-        print(f"Recall: {metrics['recall']:.4f}")
-        print(f"F1 Score: {metrics['f1_score']:.4f}")
-        print(f"ROC AUC: {metrics['roc_auc']:.4f}")
+    # Results table (CSV + markdown for the README)
+    rows = []
+    for name, r in results.items():
+        t = r["test"]
+        rows.append({"Model": name, "CV ROC-AUC": r["cv"]["roc_auc"],
+                     "Test ROC-AUC": t["roc_auc"], "Precision": t["precision"],
+                     "Recall": t["recall"], "F1": t["f1"], "Accuracy": t["accuracy"],
+                     "Features kept": len(r["features"])})
+    table = pd.DataFrame(rows).round(4)
+    table.to_csv("reports/results.csv", index=False)
+    with open("reports/results.md", "w") as f:
+        f.write(table.to_markdown(index=False))
 
-        return results
-    except Exception as e:
-        logger.error(f"Error training {model_name}: {str(e)}", exc_info=True)
-        raise
+    # Metadata
+    meta = {"timestamp": TIMESTAMP, "best_model": best_name,
+            "selection_rule": "highest mean CV ROC-AUC",
+            "models": {n: {"best_params": {k: str(v) for k, v in r["best_params"].items()},
+                           "cv": r["cv"],
+                           "test": {k: v for k, v in r["test"].items()
+                                    if k != "classification_report"},
+                           "selected_features": r["features"]}
+                       for n, r in results.items()}}
+    with open("reports/metadata.json", "w") as f:
+        json.dump(meta, f, indent=2)
 
-def train_all_models(models, X_train, y_train, X_test, y_test, use_smote=True):
-    """Train all configured models"""
-    logger.info(f"Starting training for {len(models)} models")
-    trained_models = {}
-    model_scores = {}
+    # Text report
+    with open("reports/training_report.txt", "w") as f:
+        f.write(f"CHURN MODEL TRAINING REPORT ({TIMESTAMP})\n{'=' * 60}\n")
+        f.write(table.to_string(index=False) + "\n\n")
+        f.write(f"Best model (by CV ROC-AUC): {best_name}\n\n")
+        for name, r in results.items():
+            f.write(f"{name}\n{'-' * 40}\nBest params: {r['best_params']}\n")
+            f.write(f"Selected features ({len(r['features'])}): {r['features']}\n")
+            f.write(f"Confusion matrix [[TN FP] [FN TP]]: {r['test']['confusion_matrix']}\n")
+            f.write(r["test"]["classification_report"] + "\n")
 
-    try:
-        if use_smote:
-            X_train_res, y_train_res = apply_smote(X_train, y_train)
-        else:
-            logger.info("Skipping SMOTE - using original training data")
-            X_train_res, y_train_res = X_train, y_train
+    # ROC curves
+    plt.figure(figsize=(7, 6))
+    for name, r in results.items():
+        proba = r["pipeline"].predict_proba(X_test)[:, 1]
+        fpr, tpr, _ = roc_curve(y_test, proba)
+        plt.plot(fpr, tpr, label=f"{name} (AUC = {r['test']['roc_auc']:.3f})")
+    plt.plot([0, 1], [0, 1], "k--", label="Random (AUC = 0.500)")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate (Recall)")
+    plt.title("ROC Curves - Test Set")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("reports/roc_curves.png", dpi=150)
+    plt.close()
 
-        successful_models = 0
-        for model_name, model_config in models.items():
-            try:
-                results = train_single_model(
-                    model_name,
-                    model_config,
-                    X_train_res,
-                    y_train_res,
-                    X_test,
-                    y_test
-                )
+    # Feature importance of best model (on selected features)
+    best_pipe = results[best_name]["pipeline"]
+    importances = best_pipe.named_steps["model"].feature_importances_
+    imp = pd.Series(importances, index=results[best_name]["features"]).sort_values()
+    plt.figure(figsize=(8, max(4, 0.35 * len(imp))))
+    imp.plot(kind="barh")
+    plt.title(f"Feature Importance - {best_name}")
+    plt.tight_layout()
+    plt.savefig("reports/feature_importance.png", dpi=150)
+    plt.close()
 
-                trained_models[model_name] = results['model']
-                model_scores[model_name] = results['metrics']
-                successful_models += 1
-            except Exception as e:
-                logger.error(f"Failed to train {model_name}: {str(e)}")
-                logger.warning(f"Continuing with other models...")
-                continue
+    print(f"\nSaved: models/, reports/results.md, reports/roc_curves.png, "
+          f"reports/feature_importance.png, reports/training_report.txt")
+    return table
 
-        logger.info(f"Successfully trained {successful_models}/{len(models)} models")
-        return trained_models, model_scores
-    except Exception as e:
-        logger.error(f"Error in train_all_models: {str(e)}", exc_info=True)
-        raise
-
-def find_best_model(trained_models, model_scores):
-    """Find the best performing model based on ROC AUC score"""
-    logger.info("Finding best performing model")
-    try:
-        if not model_scores:
-            logger.warning("No model scores available")
-            return None
-        
-        best_score = 0
-        best_name = None
-
-        for name, metrics in model_scores.items():
-            if metrics['roc_auc'] > best_score:
-                best_score = metrics['roc_auc']
-                best_name = name
-
-        if best_name:
-            best_model = {
-                'name': best_name,
-                'model': trained_models[best_name],
-                'score': best_score
-            }
-            logger.info(f"Best model identified: {best_name} with ROC AUC: {best_score:.4f}")
-            return best_model
-        
-        logger.warning("No best model could be determined")
-        return None
-    except Exception as e:
-        logger.error(f"Error finding best model: {str(e)}", exc_info=True)
-        return None
-
-def save_models(trained_models, model_scores, best_model, feature_names, use_smote=True):
-    """Save trained models and metadata"""
-    logger.info("Saving trained models and metadata")
-    try:
-        if not trained_models:
-            logger.warning("No trained models to save")
-            return []
-        
-        # Create models directory if it doesn't exist
-        os.makedirs("models", exist_ok=True)
-        saved_paths = []
-
-        # Save individual models
-        for model_name, model in trained_models.items():
-            try:
-                filename = f"models/{model_name}_model_{TIMESTAMP}.joblib"
-                joblib.dump(model, filename)
-                saved_paths.append(filename)
-                logger.debug(f"Saved {model_name} to {filename}")
-                print(f"Saved {model_name} to {filename}")
-            except Exception as e:
-                logger.error(f"Failed to save {model_name}: {str(e)}")
-
-        # Save best model separately
-        if best_model:
-            try:
-                best_filename = f"models/best_model_{TIMESTAMP}.joblib"
-                joblib.dump(best_model['model'], best_filename)
-                saved_paths.append(best_filename)
-                logger.info(f"Saved best model ({best_model['name']}) to {best_filename}")
-            except Exception as e:
-                logger.error(f"Failed to save best model: {str(e)}")
-
-        # Save metadata
-        try:
-            metadata = {
-                'timestamp': TIMESTAMP,
-                'use_smote': use_smote,
-                'model_scores': model_scores,
-                'best_model_name': best_model['name'] if best_model else None,
-                'feature_names': feature_names,
-                'random_state': RANDOM_STATE
-            }
-            
-            metadata_filename = f"models/model_metadata_{TIMESTAMP}.joblib"
-            joblib.dump(metadata, metadata_filename)
-            saved_paths.append(metadata_filename)
-            logger.info(f"Saved metadata to {metadata_filename}")
-        except Exception as e:
-            logger.error(f"Failed to save metadata: {str(e)}")
-            
-        logger.info(f"Successfully saved {len(saved_paths)} files")
-        print(f"\nModels saved successfully:")
-        for path in saved_paths:
-            print(f"  - {path}")
-            
-        print(f"All models and metadata saved successfully")
-        return saved_paths
-    except Exception as e:
-        logger.error(f"Error saving models: {str(e)}", exc_info=True)
-        return []
-
-def generate_training_report(model_scores, best_model, use_smote=True):
-    """Generate detailed training report"""
-    logger.info("Generating training report")
-    try:
-        # Create reports directory if it doesn't exist
-        os.makedirs("reports", exist_ok=True)
-        
-        report_filename = f"reports/training_report_{TIMESTAMP}.txt"
-        with open(report_filename, 'w') as f:
-            f.write('-'*80 + '\n')
-            f.write("CHURN PREDICTION MODEL TRAINING REPORT\n")
-            f.write('-'*80 + '\n')
-            f.write(f"Training Timestamp: {TIMESTAMP}\n")
-            f.write(f"SMOTE Applied: {use_smote}\n")
-            f.write(f"Random State: {RANDOM_STATE}\n\n")
-
-            f.write("MODEL PERFORMANCE SUMMARY\n")
-            f.write('-'*50 + '\n')
-
-            for model_name, metrics in model_scores.items():
-                f.write(f"\n{model_name}:\n")
-                f.write(f"  Accuracy:  {metrics['accuracy']:.4f}\n")
-                f.write(f"  Precision: {metrics['precision']:.4f}\n")
-                f.write(f"  Recall:    {metrics['recall']:.4f}\n")
-                f.write(f"  F1 Score:  {metrics['f1_score']:.4f}\n")
-                f.write(f"  ROC AUC:   {metrics['roc_auc']:.4f}\n")
-
-            if best_model:
-                f.write(f"\nBEST MODEL: {best_model['name']}\n")
-                f.write(f"ROC AUC Score: {best_model['score']:.4f}\n")
-                
-                f.write("\n" + "="*80 + "\n")
-                f.write("DETAILED CLASSIFICATION REPORTS\n")
-                f.write("="*80 + "\n")
-                
-                for model_name, metrics in model_scores.items():
-                    f.write(f"\n{model_name} Classification Report:\n")
-                    f.write("-"*40 + "\n")
-                    f.write(metrics['classification_report'])
-                    f.write("\n")
-                    f.write(f"Confusion Matrix:\n")
-                    f.write(str(metrics['confusion_matrix']))
-                    f.write("\n\n")
-        
-        logger.info(f"Training report saved to: {report_filename}")
-        print(f"\nTraining report saved to: {report_filename}")
-        return report_filename
-    except Exception as e:
-        logger.error(f"Error generating training report: {str(e)}", exc_info=True)
-        return None
-
-def load_saved_model(model_path):
-    """Load a saved model from disk"""
-    logger.info(f"Loading model from {model_path}")
-    try:
-        if not os.path.exists(model_path):
-            logger.error(f"Model file not found: {model_path}")
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-        
-        model = joblib.load(model_path)
-        logger.info(f"Model loaded successfully from {model_path}")
-        print(f"Model loaded successfully from {model_path}")
-        return model
-    except Exception as e:
-        logger.error(f"Error loading model from {model_path}: {str(e)}", exc_info=True)
-        raise
-
-def predict_with_model(model, X_data):
-    """Make predictions using a trained model"""
-    logger.debug("Making predictions with trained model")
-    try:
-        predictions = model.predict(X_data)
-        probabilities = model.predict_proba(X_data)[:, 1]
-        
-        logger.debug(f"Generated {len(predictions)} predictions")
-        return predictions, probabilities
-    except Exception as e:
-        logger.error(f"Error making predictions: {str(e)}", exc_info=True)
-        raise
 
 def main():
-    """Main training pipeline"""
-    logger.info("="*60)
-    logger.info("CHURN PREDICTION MODEL TRAINING PIPELINE STARTED")
-    logger.info("="*60)
-    
-    print("="*60)
-    print("CHURN PREDICTION MODEL TRAINING PIPELINE")
-    print("="*60)
-    
-    try:
-        # Configuration
-        USE_SMOTE = True
-        FEATURE_SELECTION_K = 15
-        
-        logger.info(f"Configuration - USE_SMOTE: {USE_SMOTE}, FEATURE_SELECTION_K: {FEATURE_SELECTION_K}")
-        
-        # Load and split data
-        logger.info("Loading and splitting data...")
-        print("Loading and splitting data...")
-        train_df, test_df = load_and_split_data(test_size=0.2, random_state=RANDOM_STATE)
-        logger.info(f"Data loaded successfully. Train shape: {train_df.shape}, Test shape: {test_df.shape}")
-        
-        # Preprocess features
-        logger.info("Preprocessing features...")
-        print("Preprocessing features...")
-        train_processed = preprocess_features(train_df, target_col='churn', is_training=True)
-        test_processed = preprocess_features(test_df, target_col='churn', is_training=False)
-        
-        logger.info(f"Features preprocessed. Train: {train_processed.shape}, Test: {test_processed.shape}")
-        print(f"Processed data shapes - Train: {train_processed.shape}, Test: {test_processed.shape}")
-        
-        # Feature selection
-        logger.info(f"Performing feature selection (k={FEATURE_SELECTION_K})...")
-        print(f"Performing feature selection (k={FEATURE_SELECTION_K})...")
-        
-        if 'churn' not in train_processed.columns:
-            logger.error("Target column 'churn' not found in processed data")
-            raise ValueError("Target column 'churn' not found in processed data")
-        
-        selected_train, selected_features = select_features(
-            train_processed, 
-            target_col='churn', 
-            k=FEATURE_SELECTION_K
-        )
-        
-        # Apply same feature selection to test data
-        test_selected = test_processed[selected_features + ['churn']]
-        
-        logger.info(f"Selected {len(selected_features)} features")
-        print(f"Selected {len(selected_features)} features")
-        
-        # Prepare training data
-        X_train = selected_train.drop('churn', axis=1)
-        y_train = selected_train['churn']
-        X_test = test_selected.drop('churn', axis=1)
-        y_test = test_selected['churn']
-        
-        feature_names = X_train.columns.tolist()
-        logger.debug(f"Feature names: {feature_names}")
-
-        # Setup models
-        logger.info("Setting up models...")
-        models = setup_models()
-        
-        # Train all models
-        logger.info("Starting model training...")
-        trained_models, model_scores = train_all_models(
-            models, X_train, y_train, X_test, y_test, use_smote=USE_SMOTE
-        )
-        
-        if not trained_models:
-            logger.error("No models were successfully trained")
-            raise RuntimeError("No models were successfully trained")
-        
-        # Find best model
-        best_model = find_best_model(trained_models, model_scores)
-        
-        # Save models
-        logger.info("Saving models...")
-        saved_paths = save_models(trained_models, model_scores, best_model, feature_names, USE_SMOTE)
-        
-        # Generate report
-        logger.info("Generating training report...")
-        report_path = generate_training_report(model_scores, best_model, USE_SMOTE)
-        
-        # Summary
-        summary_info = {
-            'models_trained': len(trained_models),
-            'best_model': best_model['name'] if best_model else 'None',
-            'best_roc_auc': best_model['score'] if best_model else 0,
-            'files_saved': len(saved_paths),
-            'report_path': report_path
-        }
-        
-        logger.info("Training pipeline completed successfully")
-        logger.info(f"Summary: {summary_info}")
-        
-        print(f"\nSummary:")
-        print(f"- Models trained: {len(trained_models)}")
-        print(f"- Best model: {best_model['name'] if best_model else 'None'}")
-        print(f"- Best ROC AUC: {best_model['score']:.4f}" if best_model else "")
-        print(f"- Models saved: {len(saved_paths)} files")
-        print(f"- Report saved: {report_path}")
-
-        return {
-            'trained_models': trained_models,
-            'model_scores': model_scores,
-            'best_model': best_model,
-            'feature_names': feature_names,
-            'saved_paths': saved_paths,
-            'report_path': report_path
-        }
-        
-    except Exception as e:
-        logger.error(f"Training pipeline failed: {str(e)}", exc_info=True)
-        print(f"Training failed: {str(e)}")
+    print("=" * 60 + "\nCHURN PREDICTION TRAINING PIPELINE\n" + "=" * 60)
+    X_train, X_test, y_train, y_test = load_and_split_data(random_state=RANDOM_STATE)
+    results = train_all(X_train, y_train, X_test, y_test)
+    best_name = max(results, key=lambda n: results[n]["cv"]["roc_auc"])
+    table = save_outputs(results, best_name, X_test, y_test)
+    print("\n" + "=" * 60 + "\nFINAL RESULTS\n" + "=" * 60)
+    print(table.to_string(index=False))
+    print(f"\nBest model (chosen by CV ROC-AUC, not test): {best_name}")
+    print(f"Its selected features: {results[best_name]['features']}")
 
 
-if __name__ == '__main__':
-    try:
-        result = main()
-        logger.info("Training completed successfully")
-        print("Training completed successfully")
-    except Exception as e:
-        logger.error(f"Script execution failed: {str(e)}", exc_info=True)
-        print(f"Script failed: {str(e)}")
+if __name__ == "__main__":
+    main()
