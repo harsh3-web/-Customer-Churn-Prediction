@@ -1,5 +1,5 @@
 {
-  "timestamp": "20261002_221927",
+  "timestamp": "20261002_225512",
   "best_model": "XGBoost",
   "selection_rule": "highest mean CV ROC-AUC",
   "models": {
@@ -13,25 +13,25 @@
         "model__max_depth": "10"
       },
       "cv": {
-        "roc_auc": 0.8417735553133386,
-        "recall": 0.6428093645484949,
-        "precision": 0.6018010751350841,
-        "f1": 0.621172962124944
+        "roc_auc": 0.8417831180780826,
+        "recall": 0.6421404682274247,
+        "precision": 0.5953223324351561,
+        "f1": 0.6173747990094907
       },
       "test": {
-        "accuracy": 0.7735982966643009,
-        "precision": 0.5665859564164649,
-        "recall": 0.6256684491978609,
-        "f1": 0.5946632782719187,
-        "roc_auc": 0.8382895450670387,
+        "accuracy": 0.7764371894960965,
+        "precision": 0.5697399527186762,
+        "recall": 0.6443850267379679,
+        "f1": 0.6047678795483061,
+        "roc_auc": 0.8373362783848717,
         "confusion_matrix": [
           [
-            856,
-            179
+            853,
+            182
           ],
           [
-            140,
-            234
+            133,
+            241
           ]
         ]
       },
@@ -39,6 +39,7 @@
         "gender_Male",
         "Partner_Yes",
         "Dependents_Yes",
+        "MultipleLines_No",
         "MultipleLines_Yes",
         "InternetService_Fiber optic",
         "OnlineSecurity_No",
@@ -49,15 +50,16 @@
         "TechSupport_No",
         "TechSupport_Yes",
         "Contract_Month-to-month",
-        "Contract_One year",
+        "Contract_Two year",
         "PaperlessBilling_Yes",
-        "PaymentMethod_Credit card (automatic)",
+        "PaymentMethod_Bank transfer (automatic)",
         "PaymentMethod_Electronic check",
+        "tenure_segment_0-6m",
+        "tenure_segment_4+yr",
         "SeniorCitizen",
         "tenure",
         "MonthlyCharges",
         "TotalCharges",
-        "tenure_years",
         "is_month_to_month",
         "has_long_contract",
         "service_bundle_score",
@@ -78,25 +80,25 @@
         "model__colsample_bytree": "1.0"
       },
       "cv": {
-        "roc_auc": 0.8432688134147963,
-        "recall": 0.5846153846153846,
-        "precision": 0.6272414007200133,
-        "f1": 0.6046652769293777
+        "roc_auc": 0.8445471927592946,
+        "recall": 0.5846153846153845,
+        "precision": 0.6314796768006217,
+        "f1": 0.6068803734270725
       },
       "test": {
-        "accuracy": 0.7892122072391767,
-        "precision": 0.6084507042253521,
-        "recall": 0.5775401069518716,
-        "f1": 0.5925925925925926,
-        "roc_auc": 0.8457787594616238,
+        "accuracy": 0.7906316536550745,
+        "precision": 0.6112676056338028,
+        "recall": 0.5802139037433155,
+        "f1": 0.5953360768175583,
+        "roc_auc": 0.8449624118422072,
         "confusion_matrix": [
           [
-            896,
-            139
+            897,
+            138
           ],
           [
-            158,
-            216
+            157,
+            217
           ]
         ]
       },
@@ -104,6 +106,7 @@
         "gender_Male",
         "Partner_Yes",
         "Dependents_Yes",
+        "MultipleLines_No",
         "MultipleLines_Yes",
         "InternetService_Fiber optic",
         "OnlineSecurity_No",
@@ -114,15 +117,16 @@
         "TechSupport_No",
         "TechSupport_Yes",
         "Contract_Month-to-month",
-        "Contract_One year",
+        "Contract_Two year",
         "PaperlessBilling_Yes",
-        "PaymentMethod_Credit card (automatic)",
+        "PaymentMethod_Bank transfer (automatic)",
         "PaymentMethod_Electronic check",
+        "tenure_segment_0-6m",
+        "tenure_segment_4+yr",
         "SeniorCitizen",
         "tenure",
         "MonthlyCharges",
         "TotalCharges",
-        "tenure_years",
         "is_month_to_month",
         "has_long_contract",
         "service_bundle_score",
@@ -144,31 +148,33 @@
         "model__colsample_bytree": "0.8"
       },
       "cv": {
-        "roc_auc": 0.8380309253921485,
-        "recall": 0.6214046822742476,
-        "precision": 0.6162673119540601,
-        "f1": 0.6186809578114513
+        "roc_auc": 0.8378163133899357,
+        "recall": 0.6167224080267559,
+        "precision": 0.6235637195689168,
+        "f1": 0.6199588121042808
       },
       "test": {
-        "accuracy": 0.7842441447835344,
-        "precision": 0.5921052631578947,
-        "recall": 0.6016042780748663,
-        "f1": 0.596816976127321,
-        "roc_auc": 0.8344622697563875,
+        "accuracy": 0.78708303761533,
+        "precision": 0.5958549222797928,
+        "recall": 0.6149732620320856,
+        "f1": 0.6052631578947368,
+        "roc_auc": 0.8348123175488906,
         "confusion_matrix": [
           [
-            880,
-            155
+            879,
+            156
           ],
           [
-            149,
-            225
+            144,
+            230
           ]
         ]
       },
       "selected_features": [
         "OnlineSecurity_No",
+        "OnlineSecurity_Yes",
         "OnlineBackup_No",
+        "DeviceProtection_No",
         "TechSupport_No",
         "Contract_Month-to-month",
         "PaperlessBilling_Yes",
@@ -176,9 +182,9 @@
         "tenure",
         "MonthlyCharges",
         "TotalCharges",
-        "tenure_years",
         "is_month_to_month",
         "has_long_contract",
+        "service_bundle_score",
         "charges_per_tenure",
         "high_risk_payment"
       ]

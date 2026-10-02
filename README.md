@@ -10,15 +10,15 @@ All models are tuned with RandomizedSearchCV (10 combinations × stratified 5-fo
 
 | Model | CV ROC-AUC | Test ROC-AUC | Precision | Recall | F1 | Accuracy | Features kept |
 |---|---|---|---|---|---|---|---|
-| Random Forest | 0.8418 | 0.8383 | 0.5666 | **0.6257** | 0.5947 | 0.7736 | 28 |
-| **XGBoost (best)** | **0.8433** | **0.8458** | **0.6085** | 0.5775 | 0.5926 | **0.7892** | 28 |
-| LightGBM | 0.8380 | 0.8345 | 0.5921 | 0.6016 | **0.5968** | 0.7842 | 14 |
+| Random Forest | 0.8418 | 0.8373 | 0.5697 | **0.6444** | 0.6048 | 0.7764 | 30 |
+| **XGBoost (best)** | **0.8445** | **0.8450** | **0.6113** | 0.5802 | 0.5953 | **0.7906** | 30 |
+| LightGBM | 0.8378 | 0.8348 | 0.5959 | 0.6150 | **0.6053** | 0.7871 | 16 |
 
-Precision, recall and F1 are for the churn class at the default 0.5 threshold. Exact numbers can shift slightly (±0.005) across library versions.
+Precision, recall and F1 are for the churn class at the default 0.5 threshold. The model libraries are pinned in `requirement.txt`, so a fresh run reproduces these numbers exactly.
 
 - **XGBoost** gives the best ranking of customers by churn risk (highest ROC-AUC) and the most precise churn flags.
 - **Random Forest** catches the most churners (highest recall), which is useful when missing a churner costs more than an unnecessary retention offer.
-- **LightGBM** reaches a similar F1 using only 14 of the 53 encoded features, the most compact model.
+- **LightGBM** has the highest F1 while using only 16 of the 52 encoded features, the most compact model.
 - CV and test scores are within 0.01 for every model, which indicates no data leakage and good generalisation.
 
 ![ROC Curves](reports/roc_curves.png)
@@ -74,7 +74,7 @@ CSV data ──► SQLite (SQLAlchemy) ──► Cleaning ──► Stratified 8
 Only 26.5% of customers churn. **SMOTE** oversamples the minority class inside each training fold, so the models learn churn patterns instead of defaulting to "no churn".
 
 ### Model-based feature selection
-`SelectFromModel` with a Random Forest keeps the features whose importance is above a tuned threshold (mean, median or 0.5 × mean). It reduced the 53 encoded features to 28 for XGBoost and Random Forest, and to 14 for LightGBM.
+`SelectFromModel` with a Random Forest keeps the features whose importance is above a tuned threshold (mean, median or 0.5 × mean). It reduced the 52 encoded features to 30 for XGBoost and Random Forest, and to 16 for LightGBM.
 
 ### Models
 - **Random Forest:** bagging ensemble of decision trees
@@ -119,7 +119,7 @@ python ingestion_db.py
 python train.py
 ```
 
-The dataset downloads automatically on the first run. Training takes about 5 minutes on a 2-core CPU.
+The dataset downloads automatically on the first run. Training takes about 4 minutes on a 2-core CPU.
 
 ## Tech Stack
 

@@ -1,35 +1,35 @@
-CHURN MODEL TRAINING REPORT (20261002_221927)
+CHURN MODEL TRAINING REPORT (20261002_225512)
 ============================================================
        Model  CV ROC-AUC  Test ROC-AUC  Precision  Recall     F1  Accuracy  Features kept
-RandomForest      0.8418        0.8383     0.5666  0.6257 0.5947    0.7736             28
-     XGBoost      0.8433        0.8458     0.6085  0.5775 0.5926    0.7892             28
-    LightGBM      0.8380        0.8345     0.5921  0.6016 0.5968    0.7842             14
+RandomForest      0.8418        0.8373     0.5697  0.6444 0.6048    0.7764             30
+     XGBoost      0.8445        0.8450     0.6113  0.5802 0.5953    0.7906             30
+    LightGBM      0.8378        0.8348     0.5959  0.6150 0.6053    0.7871             16
 
 Best model (by CV ROC-AUC): XGBoost
 
 RandomForest
 ----------------------------------------
 Best params: {'select__threshold': '0.5*mean', 'model__n_estimators': 200, 'model__min_samples_split': 10, 'model__min_samples_leaf': 10, 'model__max_features': 'log2', 'model__max_depth': 10}
-Selected features (28): ['gender_Male', 'Partner_Yes', 'Dependents_Yes', 'MultipleLines_Yes', 'InternetService_Fiber optic', 'OnlineSecurity_No', 'OnlineSecurity_Yes', 'OnlineBackup_No', 'OnlineBackup_Yes', 'DeviceProtection_No', 'TechSupport_No', 'TechSupport_Yes', 'Contract_Month-to-month', 'Contract_One year', 'PaperlessBilling_Yes', 'PaymentMethod_Credit card (automatic)', 'PaymentMethod_Electronic check', 'SeniorCitizen', 'tenure', 'MonthlyCharges', 'TotalCharges', 'tenure_years', 'is_month_to_month', 'has_long_contract', 'service_bundle_score', 'charges_per_tenure', 'high_risk_payment', 'single_customer']
-Confusion matrix [[TN FP] [FN TP]]: [[856, 179], [140, 234]]
+Selected features (30): ['gender_Male', 'Partner_Yes', 'Dependents_Yes', 'MultipleLines_No', 'MultipleLines_Yes', 'InternetService_Fiber optic', 'OnlineSecurity_No', 'OnlineSecurity_Yes', 'OnlineBackup_No', 'OnlineBackup_Yes', 'DeviceProtection_No', 'TechSupport_No', 'TechSupport_Yes', 'Contract_Month-to-month', 'Contract_Two year', 'PaperlessBilling_Yes', 'PaymentMethod_Bank transfer (automatic)', 'PaymentMethod_Electronic check', 'tenure_segment_0-6m', 'tenure_segment_4+yr', 'SeniorCitizen', 'tenure', 'MonthlyCharges', 'TotalCharges', 'is_month_to_month', 'has_long_contract', 'service_bundle_score', 'charges_per_tenure', 'high_risk_payment', 'single_customer']
+Confusion matrix [[TN FP] [FN TP]]: [[853, 182], [133, 241]]
               precision    recall  f1-score   support
 
-           0       0.86      0.83      0.84      1035
-           1       0.57      0.63      0.59       374
+           0       0.87      0.82      0.84      1035
+           1       0.57      0.64      0.60       374
 
-    accuracy                           0.77      1409
-   macro avg       0.71      0.73      0.72      1409
-weighted avg       0.78      0.77      0.78      1409
+    accuracy                           0.78      1409
+   macro avg       0.72      0.73      0.72      1409
+weighted avg       0.79      0.78      0.78      1409
 
 XGBoost
 ----------------------------------------
 Best params: {'select__threshold': '0.5*mean', 'model__subsample': 0.8, 'model__reg_lambda': 5, 'model__n_estimators': 100, 'model__min_child_weight': 1, 'model__max_depth': 6, 'model__learning_rate': 0.05, 'model__colsample_bytree': 1.0}
-Selected features (28): ['gender_Male', 'Partner_Yes', 'Dependents_Yes', 'MultipleLines_Yes', 'InternetService_Fiber optic', 'OnlineSecurity_No', 'OnlineSecurity_Yes', 'OnlineBackup_No', 'OnlineBackup_Yes', 'DeviceProtection_No', 'TechSupport_No', 'TechSupport_Yes', 'Contract_Month-to-month', 'Contract_One year', 'PaperlessBilling_Yes', 'PaymentMethod_Credit card (automatic)', 'PaymentMethod_Electronic check', 'SeniorCitizen', 'tenure', 'MonthlyCharges', 'TotalCharges', 'tenure_years', 'is_month_to_month', 'has_long_contract', 'service_bundle_score', 'charges_per_tenure', 'high_risk_payment', 'single_customer']
-Confusion matrix [[TN FP] [FN TP]]: [[896, 139], [158, 216]]
+Selected features (30): ['gender_Male', 'Partner_Yes', 'Dependents_Yes', 'MultipleLines_No', 'MultipleLines_Yes', 'InternetService_Fiber optic', 'OnlineSecurity_No', 'OnlineSecurity_Yes', 'OnlineBackup_No', 'OnlineBackup_Yes', 'DeviceProtection_No', 'TechSupport_No', 'TechSupport_Yes', 'Contract_Month-to-month', 'Contract_Two year', 'PaperlessBilling_Yes', 'PaymentMethod_Bank transfer (automatic)', 'PaymentMethod_Electronic check', 'tenure_segment_0-6m', 'tenure_segment_4+yr', 'SeniorCitizen', 'tenure', 'MonthlyCharges', 'TotalCharges', 'is_month_to_month', 'has_long_contract', 'service_bundle_score', 'charges_per_tenure', 'high_risk_payment', 'single_customer']
+Confusion matrix [[TN FP] [FN TP]]: [[897, 138], [157, 217]]
               precision    recall  f1-score   support
 
            0       0.85      0.87      0.86      1035
-           1       0.61      0.58      0.59       374
+           1       0.61      0.58      0.60       374
 
     accuracy                           0.79      1409
    macro avg       0.73      0.72      0.73      1409
@@ -38,14 +38,14 @@ weighted avg       0.79      0.79      0.79      1409
 LightGBM
 ----------------------------------------
 Best params: {'select__threshold': 'mean', 'model__subsample_freq': 1, 'model__subsample': 1.0, 'model__num_leaves': 50, 'model__n_estimators': 100, 'model__min_child_samples': 40, 'model__max_depth': 7, 'model__learning_rate': 0.05, 'model__colsample_bytree': 0.8}
-Selected features (14): ['OnlineSecurity_No', 'OnlineBackup_No', 'TechSupport_No', 'Contract_Month-to-month', 'PaperlessBilling_Yes', 'PaymentMethod_Electronic check', 'tenure', 'MonthlyCharges', 'TotalCharges', 'tenure_years', 'is_month_to_month', 'has_long_contract', 'charges_per_tenure', 'high_risk_payment']
-Confusion matrix [[TN FP] [FN TP]]: [[880, 155], [149, 225]]
+Selected features (16): ['OnlineSecurity_No', 'OnlineSecurity_Yes', 'OnlineBackup_No', 'DeviceProtection_No', 'TechSupport_No', 'Contract_Month-to-month', 'PaperlessBilling_Yes', 'PaymentMethod_Electronic check', 'tenure', 'MonthlyCharges', 'TotalCharges', 'is_month_to_month', 'has_long_contract', 'service_bundle_score', 'charges_per_tenure', 'high_risk_payment']
+Confusion matrix [[TN FP] [FN TP]]: [[879, 156], [144, 230]]
               precision    recall  f1-score   support
 
            0       0.86      0.85      0.85      1035
-           1       0.59      0.60      0.60       374
+           1       0.60      0.61      0.61       374
 
-    accuracy                           0.78      1409
-   macro avg       0.72      0.73      0.72      1409
-weighted avg       0.79      0.78      0.78      1409
+    accuracy                           0.79      1409
+   macro avg       0.73      0.73      0.73      1409
+weighted avg       0.79      0.79      0.79      1409
 

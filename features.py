@@ -61,7 +61,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         X = X.copy()
-        X["tenure_years"] = X["tenure"] / 12
         X["tenure_segment"] = pd.cut(
             X["tenure"], bins=[-1, 6, 12, 24, 48, 100],
             labels=["0-6m", "6m-1yr", "1-2yr", "2-4yr", "4+yr"]
